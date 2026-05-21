@@ -1,0 +1,27 @@
+chunking:
+  chunk_size: 1000
+  chunk_overlap: 200
+  separator: "\n\n"
+  strategy: "manual"
+
+embeddings:
+  model_name: "all-MiniLM-L6-v2"
+  dimension: 384
+
+vectordb:
+  type: "chromadb"
+  persist_directory: "./vectorstore"
+  collection_name: "playstation_manual"
+
+retrieval:
+  top_k: 3
+  similarity_threshold: 0.7
+
+llm:
+  provider: "openai"
+  model: "gpt-4.1-mini"
+  temperature: 0.0
+
+app:
+  log_level: "INFO"
+  interactive_mode: true
