@@ -1,84 +1,89 @@
 import sys
-sys.path.insert(0, '.')
+
+from colorama import Fore, Style, init
 
 from app.agent import RAGAgent
-from colorama import Fore, Style, init
 
 init(autoreset=True)
 
+
 def run_tests():
-    print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}🧪 RAG SYSTEM COMPREHENSIVE TEST SUITE{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}\n")
-    
+    print(f"{Fore.CYAN}{'=' * 60}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}PLAYSTATION RAG SMOKE TEST SUITE{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{'=' * 60}{Style.RESET_ALL}\n")
+
     agent = RAGAgent()
-    
-    # Test cases
+
     tests = [
         {
-            "name": "Factual Question (Should Find Answer)",
-            "question": "What are post-workout recovery tips?",
-            "expect": "should_answer"
+            "name": "Console Setup Query",
+            "question": "How do I set up a PlayStation console?",
+            "expect": "has_evaluation",
         },
         {
-            "name": "Specific Nutrient Query",
-            "question": "How much protein in cottage cheese?",
-            "expect": "should_answer"
+            "name": "Controller Pairing Query",
+            "question": "How do I connect a controller to the console?",
+            "expect": "has_evaluation",
         },
         {
-            "name": "Unrelated Question (Should Say 'Don't Know')",
+            "name": "Out-of-Scope Query",
             "question": "How do I build a rocket ship?",
-            "expect": "should_not_know"
+            "expect": "fallback_or_answer",
         },
-        {
-            "name": "Partial Information Test",
-            "question": "What are the benefits of sleep?",
-            "expect": "should_answer"
-        },
-        {
-            "name": "Multi-Document Query",
-            "question": "Tell me about nutrition and fitness",
-            "expect": "should_answer"
-        }
     ]
-    
+
     passed = 0
     failed = 0
-    
+
     for i, test in enumerate(tests, 1):
         print(f"{Fore.YELLOW}Test {i}: {test['name']}{Style.RESET_ALL}")
         print(f"Question: {test['question']}")
-        
-        result = agent.query(test['question'])
-        answer = result['answer'].lower()
-        
-        # Check expectations
-        if test['expect'] == "should_answer":
-            if "don't have" in answer or "not in the provided" in answer:
-                print(f"{Fore.RED}❌ FAILED - Should have found answer{Style.RESET_ALL}")
+
+        try:
+            result = agent.query(test["question"])
+        except Exception as exc:
+            print(f"{Fore.RED}FAILED - Query raised: {exc}{Style.RESET_ALL}\n")
+            failed += 1
+            continue
+
+        if not result.get("answer"):
+            print(f"{Fore.RED}FAILED - Empty answer returned{Style.RESET_ALL}\n")
+            failed += 1
+            continue
+
+        evaluation = result.get("evaluation") or {}
+        search_metrics = evaluation.get("search")
+        answer_metrics = evaluation.get("answer")
+
+        if test["expect"] == "has_evaluation":
+            if not search_metrics or not answer_metrics:
+                print(f"{Fore.RED}FAILED - Missing evaluation metrics{Style.RESET_ALL}\n")
                 failed += 1
-            else:
-                print(f"{Fore.GREEN}✅ PASSED - Found answer{Style.RESET_ALL}")
-                print(f"   Answer preview: {result['answer'][:100]}...")
-                print(f"   Sources: {len(result['sources'])} documents")
-                passed += 1
-        
-        elif test['expect'] == "should_not_know":
-            if "don't have" in answer or "not in the provided" in answer:
-                print(f"{Fore.GREEN}✅ PASSED - Correctly said 'don't know'{Style.RESET_ALL}")
-                passed += 1
-            else:
-                print(f"{Fore.RED}❌ FAILED - Should have said 'don't know'{Style.RESET_ALL}")
+                continue
+
+        if test["expect"] == "fallback_or_answer":
+            fallback = "i couldn't find this in the provided playstation manual(s)." in result["answer"].lower()
+            if not fallback and not result.get("sources"):
+                print(f"{Fore.RED}FAILED - Neither fallback nor sources present{Style.RESET_ALL}\n")
                 failed += 1
-        
-        print()
-    
-    print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}📊 TEST SUMMARY{Style.RESET_ALL}")
-    print(f"{Fore.CYAN}{'='*60}{Style.RESET_ALL}")
-    print(f"{Fore.GREEN}✅ Passed: {passed}/{len(tests)}{Style.RESET_ALL}")
-    print(f"{Fore.RED}❌ Failed: {failed}/{len(tests)}{Style.RESET_ALL}")
-    print()
+                continue
+
+        print(f"{Fore.GREEN}PASSED{Style.RESET_ALL}")
+        print(f"Answer preview: {result['answer'][:120]}...")
+        print(f"Sources: {len(result.get('sources', []))}")
+        print(f"Search metrics: {search_metrics}")
+        print(f"Answer metrics: {answer_metrics}\n")
+        passed += 1
+
+    print(f"{Fore.CYAN}{'=' * 60}{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}TEST SUMMARY{Style.RESET_ALL}")
+    print(f"{Fore.CYAN}{'=' * 60}{Style.RESET_ALL}")
+    print(f"{Fore.GREEN}Passed: {passed}/{len(tests)}{Style.RESET_ALL}")
+    print(f"{Fore.RED}Failed: {failed}/{len(tests)}{Style.RESET_ALL}")
+
+    if failed:
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     run_tests()

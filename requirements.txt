@@ -17,6 +17,7 @@ cryptography>=3.1
 # LLM Provider (choose one or both)
 langchain-openai==0.2.14      # For OpenAI API
 langchain-ollama==0.2.2       # For local Ollama
+openai>=1.58.1                # OpenAI SDK used by evaluation judge
 
 # Configuration Management
 pyyaml==6.0.2
@@ -25,6 +26,9 @@ python-dotenv==1.0.1
 # Utilities
 tqdm==4.67.1                  # Progress bars
 colorama==0.4.6               # Colored terminal output
+numpy==2.2.1                  # Search metrics math
+rapidfuzz==3.11.0             # Fuzzy answer scoring
+rouge-score==0.1.2            # ROUGE answer scoring
 
 # Optional: Enhanced logging
 loguru==0.7.3

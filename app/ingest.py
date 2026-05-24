@@ -5,6 +5,7 @@ Reads one or more PDFs from data/pdfs/, chunks them, embeds them (local embeddin
 and persists a ChromaDB collection to vectorstore/.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -16,6 +17,7 @@ if str(PROJECT_ROOT) not in sys.path:
 import yaml
 from typing import List
 
+from chromadb.config import Settings
 from dotenv import load_dotenv
 from pypdf import PdfReader
 
@@ -29,6 +31,7 @@ from app.chunking_strategies import AdvancedChunkingStrategies
 
 init(autoreset=True)
 load_dotenv()
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "FALSE")
 
 
 class DocumentIngestion:
@@ -60,7 +63,10 @@ class DocumentIngestion:
             "token_based": AdvancedChunkingStrategies.token_based_with_overlap(512, 128),
             "semantic": AdvancedChunkingStrategies.semantic_chunking(chunk_size, chunk_overlap),
             "manual": AdvancedChunkingStrategies.manual_chunking(1200, 200),
-            "agentic": AdvancedChunkingStrategies.agentic_chunking(1500, 200),
+            "agentic": AdvancedChunkingStrategies.agentic_chunking(
+                max_chunk_size=1500,
+                overlap=200,
+            ),
             "recursive": AdvancedChunkingStrategies.recursive_chunking(chunk_size, chunk_overlap),
         }
 
@@ -111,6 +117,11 @@ class DocumentIngestion:
             embedding=self.embeddings,
             collection_name=self.collection_name,
             persist_directory=str(self.vectorstore_dir),
+            client_settings=Settings(
+                anonymized_telemetry=False,
+                is_persistent=True,
+                persist_directory=str(self.vectorstore_dir),
+            ),
         )
 
         print(f"{Fore.GREEN}Stored at: {self.vectorstore_dir}{Style.RESET_ALL}")

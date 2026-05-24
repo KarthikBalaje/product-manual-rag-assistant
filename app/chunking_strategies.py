@@ -7,10 +7,9 @@ from langchain.text_splitter import (
     RecursiveCharacterTextSplitter,
     TokenTextSplitter
 )
-from langchain_openai import ChatOpenAI
 from typing import List, Optional
+from langchain_openai import ChatOpenAI
 from langchain.schema import Document
-import os
 from dotenv import load_dotenv
 
 load_dotenv()

@@ -1,158 +1,139 @@
 # PlayStation Manual RAG Assistant
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![LangChain](https://img.shields.io/badge/LangChain-0.3-green.svg)](https://python.langchain.com/)
-[![LangGraph](https://img.shields.io/badge/LangGraph-0.2-green.svg)](https://langchain-ai.github.io/langgraph/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+RAG assistant that answers questions from local PlayStation PDF manuals in `data/pdfs/`.
 
-RAG assistant that answers questions from **PlayStation user manual PDFs** stored locally in `data/pdfs/`.
-Answers are grounded in the manuals and include source + page citations.
+## What This Pipeline Does
 
----
+1. Loads PDFs from `data/pdfs/`
+2. Splits them into chunks (default: `manual` strategy)
+3. Embeds chunks with `all-MiniLM-L6-v2`
+4. Stores vectors in Chroma (`./vectorstore`, collection: `playstation_manual`)
+5. Retrieves top-k chunks and generates grounded answers with OpenAI
+6. Runs evaluation checks (search relevance + answer grounding/relevance)
+7. Displays confidence and metric trends in Streamlit
 
-## What It Does
+## Prerequisites
 
-- Loads PDFs from `data/pdfs/*.pdf` (example: `PS5.pdf`, `PS4.pdf`, etc.)
-- Chunks the manuals (default: `manual` chunking to keep procedures intact)
-- Embeds with local SentenceTransformers (`all-MiniLM-L6-v2`)
-- Stores vectors in ChromaDB (`./vectorstore`, collection `playstation_manual`)
-- Retrieves top-k chunks and generates a grounded answer (OpenAI)
+- Python 3.10+ recommended
+- OpenAI API key
 
----
+## Setup
 
-## Quick Start
+From project root:
 
-### Prerequisites
-
-- Python 3.8+
-- `OPENAI_API_KEY` set (in `.env` or environment variable)
-
-### Install
-
-```bash
-python -m venv venv
-
-# Windows PowerShell:
-.\venv\Scripts\Activate.ps1
-
-pip install -r requirements.txt
-```
-
-### How To Run (Windows PowerShell)
-
-From the project folder:
-
-```bash
-# 1) Create + activate venv
+```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-
-# 2) Install dependencies
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-
-# 3) Set your API key (in .env or as an environment variable)
-# .env example:
-# OPENAI_API_KEY=sk-...
-
-# 4) Ingest PDFs from data/pdfs/
-python -m app.ingest manual
-
-# 5) Run the app
-# CLI:
-python -m app.main
-
-# Streamlit:
-streamlit run streamlit_app.py
 ```
 
-### Ingest Manuals
+Create `.env`:
 
-Put your PlayStation manual PDFs in `data/pdfs/` and run:
+```env
+OPENAI_API_KEY=your_key_here
+```
 
-```bash
+## Run The RAG Pipeline
+
+### 1) Put manuals in place
+
+Add your PDF manuals to:
+
+```text
+data/pdfs/
+```
+
+### 2) Ingest PDFs into vector store
+
+```powershell
 python -m app.ingest manual
 ```
 
-Other strategies:
+Other chunking strategies:
 
-```bash
+```powershell
 python -m app.ingest semantic
 python -m app.ingest recursive
 python -m app.ingest token_based
 python -m app.ingest agentic
 ```
 
-### Ask Questions (CLI)
+### 3) Query from CLI
 
-```bash
+```powershell
 python -m app.main
 ```
 
-### Ask Questions (Streamlit)
+### 4) Query from Streamlit UI
 
-```bash
+```powershell
 streamlit run streamlit_app.py
 ```
 
----
+## Evaluation Mechanism
+
+Each query returns:
+
+- `evaluation.search.num_docs`
+- `evaluation.answer.grounding`
+- `evaluation.answer.relevance`
+- `evaluation.answer.semantic`
+- `evaluation.answer.confidence`
+
+The graph also supports bounded retries for retrieval and generation.
+
+## Tech Stack Notes
+
+- Current code uses:
+  - `langchain_community.embeddings.HuggingFaceEmbeddings`
+  - `langchain_community.vectorstores.Chroma`
+- This is the expected import path for the current project files.
+
+## Run Smoke Tests
+
+```powershell
+python test_suite.py
+```
 
 ## Configuration
 
-Edit `config.yaml`:
+Main settings are in `config.yaml`:
 
-```yaml
-chunking:
-  chunk_size: 1000
-  chunk_overlap: 200
-  strategy: "manual"
-
-embeddings:
-  model_name: "all-MiniLM-L6-v2"
-
-vectordb:
-  persist_directory: "./vectorstore"
-  collection_name: "playstation_manual"
-
-retrieval:
-  top_k: 3
-
-llm:
-  model: "gpt-4.1-mini"
-  temperature: 0.0
-```
-
----
+- `chunking` (strategy, size, overlap)
+- `embeddings.model_name`
+- `vectordb.persist_directory` and `collection_name`
+- `retrieval.top_k`
+- `llm.model` and `temperature`
 
 ## Project Structure
 
-```
+```text
 product-manual-rag-assistant/
-├── app/
-│   ├── agent.py                # RAG agent (retrieve + generate)
-│   ├── ingest.py               # Local PDF ingestion pipeline
-│   ├── chunking_strategies.py  # Chunking strategies (manual/semantic/...)
-│   ├── graph.py                # LangGraph state
-│   └── main.py                 # CLI chat
-├── data/
-│   └── pdfs/                    # Put PlayStation manual PDFs here
-├── vectorstore/                 # Chroma persistence
-├── streamlit_app.py
-└── config.yaml
+|-- app/
+|   |-- agent.py
+|   |-- ingest.py
+|   |-- chunking_strategies.py
+|   |-- graph.py
+|   |-- main.py
+|-- evaluation/
+|   |-- search_evaluator.py
+|   |-- answer_evaluator.py
+|   |-- llm_judge.py
+|   |-- evaluator_node.py
+|-- data/
+|   |-- pdfs/
+|-- vectorstore/
+|-- streamlit_app.py
+|-- config.yaml
+|-- test_suite.py
 ```
-
----
 
 ## Troubleshooting
 
-### No PDFs found
-
-- Ensure manuals exist in `data/pdfs/` and are real text PDFs (not image-only scans).
-
-### OPENAI_API_KEY missing
-
-- Add `OPENAI_API_KEY=...` to `.env` (or set it in your shell).
-
-### pypdf AES / cryptography error
-
-- If you see `cryptography>=3.1 is required for AES algorithm`, install dependencies again:
-  `pip install -r requirements.txt`
+- If ingestion/query returns no useful results, run ingestion again:
+  `python -m app.ingest manual`
+- If API key issues occur, verify `.env` is loaded and key is valid.
+- Some environments show Chroma telemetry warnings; these are non-blocking for core RAG execution.
+- If you see Streamlit `ScriptRunContext` warnings, run via:
+  `streamlit run streamlit_app.py`
