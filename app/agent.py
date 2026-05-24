@@ -18,6 +18,7 @@ from langgraph.graph import END, StateGraph
 from app.graph import GraphState
 from app.ingest import DocumentIngestion
 from evaluation.answer_evaluator import AnswerEvaluator
+from evaluation.search_evaluator import SearchEvaluator
 from evaluation.llm_judge import LLMJudge
 
 load_dotenv()
@@ -38,6 +39,7 @@ class RAGAgent:
         )
 
         self.answer_evaluator = AnswerEvaluator()
+        self.search_evaluator = SearchEvaluator()
         self.llm_judge = LLMJudge()
 
         self.prompt = ChatPromptTemplate.from_messages(
@@ -91,12 +93,20 @@ Context:
             collection_name=self.config["vectordb"]["collection_name"],
         )
 
+        top_k = self.config["retrieval"]["top_k"]
+        eval_k = max(top_k * 2, top_k + 3)
+
         docs = db.similarity_search(
             state["question"],
-            k=self.config["retrieval"]["top_k"],
+            k=top_k,
+        )
+        retrieval_pool = db.similarity_search(
+            state["question"],
+            k=eval_k,
         )
 
         state["context"] = docs
+        state["retrieval_pool"] = retrieval_pool
         state["sources"] = [
             {
                 "source": d.metadata.get("source", "manual"),
@@ -108,8 +118,23 @@ Context:
 
     def evaluate_search_node(self, state: GraphState):
         docs = state.get("context", [])
+        retrieval_pool = state.get("retrieval_pool", docs)
 
-        state["search_metrics"] = {"num_docs": len(docs)}
+        def doc_to_eval_row(doc):
+            source = doc.metadata.get("source", "manual")
+            page = doc.metadata.get("page", "N/A")
+            return {
+                "id": f"{source}:{page}:{abs(hash(doc.page_content))}",
+                "text": doc.page_content,
+            }
+
+        retrieved_rows = [doc_to_eval_row(doc) for doc in docs]
+        candidate_rows = [doc_to_eval_row(doc) for doc in retrieval_pool]
+        state["search_metrics"] = self.search_evaluator.evaluate(
+            state.get("question", ""),
+            retrieved_rows,
+            candidate_rows,
+        )
 
         # Retry retrieval at most once if we got nothing.
         state["retry_retrieval"] = len(docs) == 0 and state.get("retrieval_attempts", 0) < 2
@@ -140,33 +165,32 @@ Context:
         docs = state.get("context", [])
 
         context_text = "\n".join([d.page_content for d in docs])
-
-        grounding = self.llm_judge.grounding_check(question, answer, context_text)
-        relevance = self.llm_judge.relevancy_check(question, answer)
-        semantic = self.answer_evaluator.semantic_similarity(context_text, answer)
-
-        state["answer_metrics"] = {
-            "grounding": grounding,
-            "relevance": relevance,
-            "semantic": semantic,
+        answer_metrics = self.answer_evaluator.evaluate(context_text, answer)
+        llm_metrics = {
+            "grounding": self.llm_judge.grounding_check(question, answer, context_text),
+            "precision": self.llm_judge.precision_check(answer, context_text),
+            "relevance": self.llm_judge.relevancy_check(question, answer),
         }
 
-        state["retry_generation"] = (semantic < 0.4 or "0" in str(relevance)) and state.get(
+        state["answer_metrics"] = answer_metrics
+        state["llm_metrics"] = llm_metrics
+
+        semantic = float(answer_metrics.get("semantic", 0.0))
+        relevance = float(llm_metrics.get("relevance", 0.0))
+        grounding_score = float(llm_metrics.get("grounding", 0.0))
+        precision_score = float(llm_metrics.get("precision", 0.0))
+
+        state["retry_generation"] = (semantic < 0.4 or relevance < 0.4) and state.get(
             "generation_attempts", 0
         ) < 2
 
-        try:
-            grounding_score = float(str(grounding).strip())
-        except Exception:
-            grounding_score = 0.0
-
-        try:
-            relevance_score = float(str(relevance).strip())
-        except Exception:
-            relevance_score = 0.0
-
-        confidence = (0.4 * float(semantic)) + (0.4 * grounding_score) + (0.2 * relevance_score)
-        state["answer_metrics"]["confidence"] = round(confidence, 2)
+        confidence = (
+            (0.35 * semantic)
+            + (0.35 * grounding_score)
+            + (0.2 * relevance)
+            + (0.1 * precision_score)
+        )
+        state["answer_metrics"]["confidence"] = round(confidence, 4)
 
         if state.get("generation_attempts", 0) >= 2 and state.get("retry_generation"):
             state["answer"] = "I couldn't confidently find this in the manuals."
@@ -235,10 +259,12 @@ Context:
                     "vectorstore_path": None,
                     "search_metrics": None,
                     "answer_metrics": None,
+                    "llm_metrics": None,
                     "retry_retrieval": False,
                     "retry_generation": False,
                     "retrieval_attempts": 0,
                     "generation_attempts": 0,
+                    "retrieval_pool": [],
                 },
                 config={"recursion_limit": 10},
             )
@@ -250,6 +276,7 @@ Context:
                 "evaluation": {
                     "search": result.get("search_metrics"),
                     "answer": result.get("answer_metrics"),
+                    "llm": result.get("llm_metrics"),
                     "confidence": (result.get("answer_metrics") or {}).get("confidence", 0),
                 },
             }
