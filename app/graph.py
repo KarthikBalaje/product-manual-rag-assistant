@@ -1,6 +1,9 @@
 from typing import TypedDict, List, Optional
 
-from langchain.schema import Document
+try:
+    from langchain.schema import Document
+except ImportError:
+    from langchain_core.documents import Document
 
 
 class GraphState(TypedDict):

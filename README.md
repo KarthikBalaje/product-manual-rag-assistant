@@ -175,11 +175,13 @@ Current vector and embedding integrations use:
 - `langchain_community.embeddings.HuggingFaceEmbeddings`
 - `langchain_community.vectorstores.Chroma`
 
-## Run Smoke Tests
+## Run Tests
 
 ```powershell
-python test_suite.py
+python -m pytest
 ```
+
+Pytest is configured to show every test case name and status. Tests cover config validation, chunking behavior, evaluation metrics, and request validation without calling OpenAI.
 
 ## Configuration
 
@@ -192,6 +194,33 @@ Main settings are in `config.yaml`:
 - `retrieval.top_k`
 - `llm.model`
 - `llm.temperature`
+
+Environment settings are in `.env`:
+
+```env
+OPENAI_API_KEY=your-openai-api-key-here
+ANONYMIZED_TELEMETRY=FALSE
+```
+
+## Helper Scripts
+
+```powershell
+python inspect_chromadb.py
+python check_similarity.py
+python compare_chunking.py
+```
+
+Each helper has a proper `main()` entrypoint, validates inputs, and uses the shared configuration loader.
+
+## Deployment
+
+`Procfile` launches `start.sh`, and `start.sh` runs:
+
+```bash
+streamlit run streamlit_app.py --server.port "$PORT" --server.address 0.0.0.0 --server.headless true
+```
+
+Set `OPENAI_API_KEY` in the deployment environment before starting the app.
 
 ## Project Structure
 
@@ -213,7 +242,8 @@ product-manual-rag-assistant/
 |-- vectorstore/
 |-- streamlit_app.py
 |-- config.yaml
-|-- test_suite.py
+|-- pytest.ini
+|-- tests/
 |-- README.md
 ```
 

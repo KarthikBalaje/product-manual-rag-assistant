@@ -3,23 +3,67 @@ Advanced chunking strategies for user-manual RAG.
 Optimized for manuals with steps, troubleshooting, and structured content.
 """
 
-from langchain.text_splitter import (
-    RecursiveCharacterTextSplitter,
-    TokenTextSplitter
-)
+try:
+    from langchain.text_splitter import (
+        RecursiveCharacterTextSplitter,
+        TokenTextSplitter
+    )
+except ImportError:
+    try:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter, TokenTextSplitter
+    except ImportError:
+        RecursiveCharacterTextSplitter = None
+        TokenTextSplitter = None
 from typing import List, Optional
 from langchain_openai import ChatOpenAI
-from langchain.schema import Document
+try:
+    from langchain.schema import Document
+except ImportError:
+    from langchain_core.documents import Document
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+class SimpleTextSplitter:
+    """Small fallback splitter used when LangChain splitters are unavailable."""
+
+    def __init__(self, chunk_size: int, chunk_overlap: int = 0, **_kwargs) -> None:
+        _validate_chunk_params(chunk_size, chunk_overlap)
+        self.chunk_size = chunk_size
+        self.chunk_overlap = chunk_overlap
+
+    def split_text(self, text: str) -> list[str]:
+        if not text:
+            return []
+        chunks = []
+        step = self.chunk_size - self.chunk_overlap
+        for start in range(0, len(text), step):
+            chunk = text[start:start + self.chunk_size].strip()
+            if chunk:
+                chunks.append(chunk)
+        return chunks
+
+    def split_documents(self, documents: list[Document]) -> list[Document]:
+        chunks = []
+        for doc in documents:
+            for index, chunk in enumerate(self.split_text(doc.page_content)):
+                chunks.append(Document(page_content=chunk, metadata={**doc.metadata, "chunk_index": index}))
+        return chunks
+
+
+def _validate_chunk_params(chunk_size: int, chunk_overlap: int) -> None:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be greater than zero.")
+    if chunk_overlap < 0 or chunk_overlap >= chunk_size:
+        raise ValueError("chunk_overlap must be >= 0 and smaller than chunk_size.")
 
 
 # ============================================
 # 🔹 HELPER FUNCTIONS (NEW)
 # ============================================
 
-def detect_section_type(text: str):
+def detect_section_type(text: str) -> str:
     text = text.lower()
 
     if "troubleshoot" in text:
@@ -33,7 +77,7 @@ def detect_section_type(text: str):
     return "general"
 
 
-def detect_content_type(text: str):
+def detect_content_type(text: str) -> str:
     if "step" in text.lower() or "1." in text:
         return "procedural"
     return "informational"
@@ -54,7 +98,9 @@ class AdvancedChunkingStrategies:
         chunk_overlap: int = 128,
         encoding_name: str = "cl100k_base"
     ):
-        return TokenTextSplitter(
+        _validate_chunk_params(chunk_size, chunk_overlap)
+        splitter_cls = TokenTextSplitter or SimpleTextSplitter
+        return splitter_cls(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             encoding_name=encoding_name
@@ -68,6 +114,7 @@ class AdvancedChunkingStrategies:
         chunk_size: int = 1000,
         chunk_overlap: int = 200
     ):
+        _validate_chunk_params(chunk_size, chunk_overlap)
         separators = [
             "\n\n\n",
             "\n\n",
@@ -81,7 +128,8 @@ class AdvancedChunkingStrategies:
             ""
         ]
 
-        return RecursiveCharacterTextSplitter(
+        splitter_cls = RecursiveCharacterTextSplitter or SimpleTextSplitter
+        return splitter_cls(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             separators=separators,
@@ -103,6 +151,8 @@ class AdvancedChunkingStrategies:
         - Avoids breaking instructions
         """
 
+        _validate_chunk_params(chunk_size, chunk_overlap)
+
         separators = [
             "\n\n\n",                 # Sections
             "\n\n",                   # Paragraphs
@@ -118,7 +168,8 @@ class AdvancedChunkingStrategies:
             " "
         ]
 
-        return RecursiveCharacterTextSplitter(
+        splitter_cls = RecursiveCharacterTextSplitter or SimpleTextSplitter
+        return splitter_cls(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             separators=separators,
@@ -133,9 +184,11 @@ class AdvancedChunkingStrategies:
         chunk_size: int = 1000,
         chunk_overlap: int = 200
     ):
+        _validate_chunk_params(chunk_size, chunk_overlap)
         separators = ["\n\n", "\n", ". ", " ", ""]
 
-        return RecursiveCharacterTextSplitter(
+        splitter_cls = RecursiveCharacterTextSplitter or SimpleTextSplitter
+        return splitter_cls(
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
             separators=separators
@@ -150,6 +203,7 @@ class AdvancedChunkingStrategies:
         max_chunk_size: int = 1500,
         overlap: int = 200
     ):
+        _validate_chunk_params(max_chunk_size, overlap)
         if llm is None:
             llm = ChatOpenAI(
                 model="gpt-4.1-mini",
@@ -166,6 +220,7 @@ class AdvancedChunkingStrategies:
 class AgenticChunker:
 
     def __init__(self, llm: ChatOpenAI, max_chunk_size=1500, overlap=200):
+        _validate_chunk_params(max_chunk_size, overlap)
         self.llm = llm
         self.max_chunk_size = max_chunk_size
         self.overlap = overlap
@@ -194,21 +249,33 @@ Return ONLY split indices:
 
         try:
             response = self.llm.invoke(prompt)
-            indices = [int(x.strip()) for x in response.content.split(",")]
+            indices = sorted(
+                {
+                    int(x.strip())
+                    for x in response.content.split(",")
+                    if x.strip().isdigit()
+                }
+            )
 
             chunks = []
             start = 0
 
             for idx in indices:
+                if idx <= start or idx >= len(text):
+                    continue
                 chunk_start = max(0, start - self.overlap)
-                chunks.append(text[chunk_start:idx].strip())
+                chunk = text[chunk_start:idx].strip()
+                if chunk:
+                    chunks.append(chunk)
                 start = idx
 
             if start < len(text):
                 chunk_start = max(0, start - self.overlap)
-                chunks.append(text[chunk_start:].strip())
+                chunk = text[chunk_start:].strip()
+                if chunk:
+                    chunks.append(chunk)
 
-            return chunks
+            return chunks or [text]
 
         except Exception:
             fallback = AdvancedChunkingStrategies.semantic_chunking(

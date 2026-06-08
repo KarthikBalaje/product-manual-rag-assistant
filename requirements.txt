@@ -39,3 +39,6 @@ streamlit>=1.35.0
 # Manual fetch + HTML parsing
 requests==2.32.3
 beautifulsoup4==4.12.3
+
+# Testing
+pytest>=8.0.0,<10.0.0

@@ -14,20 +14,27 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import yaml
 from typing import List
 
 from chromadb.config import Settings
 from dotenv import load_dotenv
 from pypdf import PdfReader
 
-from langchain.schema import Document
+try:
+    from langchain.schema import Document
+except ImportError:
+    from langchain_core.documents import Document
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Chroma
 
 from colorama import Fore, Style, init
 
 from app.chunking_strategies import AdvancedChunkingStrategies
+from app.config import (
+    SUPPORTED_CHUNKING_STRATEGIES,
+    load_config,
+    resolve_project_path,
+)
 
 init(autoreset=True)
 load_dotenv()
@@ -36,17 +43,22 @@ os.environ.setdefault("ANONYMIZED_TELEMETRY", "FALSE")
 
 class DocumentIngestion:
     def __init__(self, config_path: str = "config.yaml", strategy: str = "manual"):
+        if strategy not in SUPPORTED_CHUNKING_STRATEGIES:
+            raise ValueError(
+                f"Unsupported chunking strategy '{strategy}'. "
+                f"Choose one of: {', '.join(sorted(SUPPORTED_CHUNKING_STRATEGIES))}."
+            )
+
         print(f"{Fore.CYAN}PlayStation Manual Ingestion{Style.RESET_ALL}")
         print(f"{Fore.YELLOW}Strategy: {strategy.upper()}{Style.RESET_ALL}\n")
 
-        with open(config_path, "r") as f:
-            self.config = yaml.safe_load(f)
+        self.config = load_config(config_path)
 
         self.strategy_name = strategy
         self.text_splitter = self._get_chunking_strategy(strategy)
 
-        self.pdf_dir = Path("data/pdfs")
-        self.vectorstore_dir = Path(self.config["vectordb"]["persist_directory"])
+        self.pdf_dir = resolve_project_path("data/pdfs")
+        self.vectorstore_dir = resolve_project_path(self.config["vectordb"]["persist_directory"])
         self.collection_name = self.config["vectordb"].get("collection_name", "playstation_manual")
 
         print(f"{Fore.YELLOW}Loading embeddings...{Style.RESET_ALL}")
@@ -86,9 +98,17 @@ class DocumentIngestion:
         documents: List[Document] = []
         for pdf_path in pdfs:
             print(f"{Fore.CYAN}Reading: {pdf_path.name}{Style.RESET_ALL}")
-            reader = PdfReader(str(pdf_path))
+            try:
+                reader = PdfReader(str(pdf_path))
+            except Exception as exc:
+                print(f"{Fore.RED}Skipping unreadable PDF {pdf_path.name}: {exc}{Style.RESET_ALL}")
+                continue
+
             for page_num, page in enumerate(reader.pages, start=1):
-                text = page.extract_text()
+                try:
+                    text = page.extract_text()
+                except Exception:
+                    text = ""
                 if text and text.strip():
                     documents.append(
                         Document(
@@ -105,12 +125,16 @@ class DocumentIngestion:
 
     def chunk_documents(self, documents: List[Document]) -> List[Document]:
         print(f"{Fore.CYAN}Chunking...{Style.RESET_ALL}")
+        if not documents:
+            return []
         chunks = self.text_splitter.split_documents(documents)
         print(f"{Fore.GREEN}{len(chunks)} chunks created{Style.RESET_ALL}\n")
         return chunks
 
     def create_vectorstore(self, chunks: List[Document]) -> None:
         print(f"{Fore.CYAN}Creating / updating vector DB...{Style.RESET_ALL}")
+        if not chunks:
+            raise ValueError("No chunks were created; cannot build vector store.")
 
         Chroma.from_documents(
             documents=chunks,

@@ -4,30 +4,30 @@ PlayStation User Manual RAG Agent (evaluated).
 
 from __future__ import annotations
 
-from pathlib import Path
-
-import yaml
 from dotenv import load_dotenv
-from langchain.prompts import ChatPromptTemplate
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Chroma
-from langchain_openai import ChatOpenAI
+try:
+    from langchain.prompts import ChatPromptTemplate
+except ImportError:
+    from langchain_core.prompts import ChatPromptTemplate
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, StateGraph
 
 from app.graph import GraphState
-from app.ingest import DocumentIngestion
-from evaluation.answer_evaluator import AnswerEvaluator
-from evaluation.search_evaluator import SearchEvaluator
-from evaluation.llm_judge import LLMJudge
+from app.config import ConfigurationError, load_config, require_openai_api_key, resolve_project_path
 
 load_dotenv()
 
 
 class RAGAgent:
     def __init__(self, config_path: str = "config.yaml"):
-        with open(config_path, "r", encoding="utf-8") as f:
-            self.config = yaml.safe_load(f)
+        self.config = load_config(config_path)
+        require_openai_api_key()
+
+        from langchain_community.embeddings import HuggingFaceEmbeddings
+        from langchain_openai import ChatOpenAI
+        from evaluation.answer_evaluator import AnswerEvaluator
+        from evaluation.search_evaluator import SearchEvaluator
+        from evaluation.llm_judge import LLMJudge
 
         self.embeddings = HuggingFaceEmbeddings(
             model_name=self.config["embeddings"]["model_name"]
@@ -73,18 +73,26 @@ Context:
     # -------------------------
 
     def check_vectorstore(self, state: GraphState):
-        path = Path(self.config["vectordb"]["persist_directory"])
+        path = resolve_project_path(self.config["vectordb"]["persist_directory"])
         state["vectorstore_path"] = str(path)
         state["needs_ingestion"] = (not path.exists()) or (not any(path.iterdir()))
         return state
 
     def ingest_node(self, state: GraphState):
         if state.get("needs_ingestion"):
+            from app.ingest import DocumentIngestion
+
             ingestion = DocumentIngestion(config_path="config.yaml")
             ingestion.run()
         return state
 
     def retrieve_node(self, state: GraphState):
+        from langchain_community.vectorstores import Chroma
+
+        question = str(state.get("question", "")).strip()
+        if not question:
+            raise ValueError("Question must not be empty.")
+
         state["retrieval_attempts"] = state.get("retrieval_attempts", 0) + 1
 
         db = Chroma(
@@ -97,11 +105,11 @@ Context:
         eval_k = max(top_k * 2, top_k + 3)
 
         docs = db.similarity_search(
-            state["question"],
+            question,
             k=top_k,
         )
         retrieval_pool = db.similarity_search(
-            state["question"],
+            question,
             k=eval_k,
         )
 
@@ -248,6 +256,15 @@ Context:
     # -------------------------
 
     def query(self, question: str):
+        question = (question or "").strip()
+        if not question:
+            return {
+                "question": "",
+                "answer": "Please enter a question about the PlayStation manuals.",
+                "sources": [],
+                "evaluation": {"confidence": 0},
+            }
+
         try:
             result = self.graph.invoke(
                 {
@@ -284,6 +301,13 @@ Context:
             return {
                 "question": question,
                 "answer": "I'm having trouble finding a reliable answer right now. Please try rephrasing your question.",
+                "sources": [],
+                "evaluation": {"confidence": 0},
+            }
+        except ConfigurationError as exc:
+            return {
+                "question": question,
+                "answer": f"Configuration error: {exc}",
                 "sources": [],
                 "evaluation": {"confidence": 0},
             }

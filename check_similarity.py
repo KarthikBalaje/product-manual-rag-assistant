@@ -1,81 +1,59 @@
-import sys
-import os
-sys.path.insert(0, '.')
+"""Run a similarity search against the configured vector store."""
 
-from app.agent import RAGAgent
-from langchain_community.vectorstores import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from __future__ import annotations
+
 from colorama import Fore, Style, init
+from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.vectorstores import Chroma
+
+from app.config import load_config, resolve_project_path
 
 init(autoreset=True)
 
-# ----------------------------------------
-# 🔹 INIT
-# ----------------------------------------
-agent = RAGAgent()
 
-question = input(f"{Fore.GREEN}Enter a question: {Style.RESET_ALL}")
+def check_similarity(question: str, config_path: str = "config.yaml") -> int:
+    question = (question or "").strip()
+    if not question:
+        print(f"{Fore.RED}Question must not be empty.{Style.RESET_ALL}")
+        return 1
 
-# ----------------------------------------
-# 🔹 STEP 1: EXTRACT PRODUCT
-# (same logic as agent)
-# ----------------------------------------
-product_name = question  # simple version
+    config = load_config(config_path)
+    vectorstore_path = resolve_project_path(config["vectordb"]["persist_directory"])
+    if not vectorstore_path.exists() or not any(vectorstore_path.iterdir()):
+        print(f"{Fore.RED}No vector database found at {vectorstore_path}{Style.RESET_ALL}")
+        print(f"{Fore.YELLOW}Run: python -m app.ingest manual{Style.RESET_ALL}")
+        return 1
 
-vectorstore_path = f"{agent.config['vectordb']['persist_directory']}/{product_name}"
-safe = "".join(ch if ch.isalnum() else "_" for ch in product_name).strip("_")
-collection_name = f"{safe}_collection"
-
-# ----------------------------------------
-# 🔹 STEP 2: ENSURE INGESTION
-# ----------------------------------------
-if not os.path.exists(vectorstore_path):
-    print(f"{Fore.YELLOW}📥 No vector DB found. Running ingestion...{Style.RESET_ALL}")
-
-    from app.ingest import DocumentIngestion
-
-    ingestion = DocumentIngestion(
-        product_name=product_name,
-        config=agent.config,
-        strategy="manual"
+    embeddings = HuggingFaceEmbeddings(model_name=config["embeddings"]["model_name"])
+    db = Chroma(
+        persist_directory=str(vectorstore_path),
+        embedding_function=embeddings,
+        collection_name=config["vectordb"]["collection_name"],
     )
-    ingestion.run()
 
-# ----------------------------------------
-# 🔹 STEP 3: LOAD VECTORSTORE
-# ----------------------------------------
-embeddings = HuggingFaceEmbeddings(
-    model_name=agent.config["embeddings"]["model_name"]
-)
+    results = db.similarity_search_with_score(question, k=5)
+    if not results:
+        print(f"{Fore.YELLOW}No similar chunks found.{Style.RESET_ALL}")
+        return 0
 
-db = Chroma(
-    persist_directory=vectorstore_path,
-    embedding_function=embeddings,
-    collection_name=collection_name,
-)
+    print(f"\n{Fore.CYAN}Top Similar Chunks{Style.RESET_ALL}\n")
+    for index, (doc, score) in enumerate(results, start=1):
+        similarity = 1 / (1 + max(float(score), 0.0))
+        print(f"{Fore.YELLOW}Rank {index} - Similarity: {similarity:.3f}{Style.RESET_ALL}")
+        print(f"  Source: {doc.metadata.get('source', 'manual')}")
+        print(f"  Page: {doc.metadata.get('page', 'N/A')}")
+        print(f"  Section: {doc.metadata.get('section_type', 'general')}")
+        print(f"  Type: {doc.metadata.get('content_type', 'informational')}")
+        print(f"  Content: {doc.page_content[:220]}...\n")
 
-# ----------------------------------------
-# 🔹 STEP 4: SIMILARITY SEARCH WITH SCORE
-# ----------------------------------------
-results = db.similarity_search_with_score(question, k=5)
+    return 0
 
-print(f"\n{Fore.CYAN}🎯 Top 5 Similar Chunks:{Style.RESET_ALL}\n")
 
-# ----------------------------------------
-# 🔹 STEP 5: PRINT RESULTS
-# ----------------------------------------
-for i, (doc, score) in enumerate(results, 1):
+def main() -> int:
+    question = input(f"{Fore.GREEN}Enter a question: {Style.RESET_ALL}")
+    return check_similarity(question)
 
-    similarity = 1 - score  # convert distance → similarity
 
-    print(f"{Fore.YELLOW}Rank {i} - Similarity: {similarity:.3f}{Style.RESET_ALL}")
+if __name__ == "__main__":
+    raise SystemExit(main())
 
-    print(f"   📄 Source: {doc.metadata.get('source', 'manual')}")
-    print(f"   📄 Page: {doc.metadata.get('page', 'N/A')}")
-
-    # 🔥 NEW METADATA (from your improved chunking)
-    print(f"   🧠 Section: {doc.metadata.get('section_type', 'general')}")
-    print(f"   📌 Type: {doc.metadata.get('content_type', 'info')}")
-
-    print(f"   📖 Content: {doc.page_content[:200]}...")
-    print()

@@ -1,131 +1,80 @@
-"""
-Compare chunking strategies for Samsung Product Manuals
-"""
+"""Compare chunking strategies on a sample PlayStation manual page."""
 
-import sys
+from __future__ import annotations
+
 from pathlib import Path
-from pypdf import PdfReader
+
 from colorama import Fore, Style, init
+from pypdf import PdfReader
 
-# Add project root
-sys.path.insert(0, str(Path(__file__).parent))
-
-from app.chunking_strategies import (
-    AdvancedChunkingStrategies,
-    compare_all_strategies
-)
+from app.chunking_strategies import compare_all_strategies
+from app.config import resolve_project_path
 
 init(autoreset=True)
 
 
-def find_sample_pdf():
-    """
-    Find a sample manual PDF from dynamic product folders
-    """
-    base_path = Path("data/pdfs")
-
-    if not base_path.exists():
-        return None, None
-
-    # Search inside product folders
-    for product_folder in base_path.iterdir():
-        if product_folder.is_dir():
-            pdf_files = list(product_folder.glob("*.pdf"))
-
-            if pdf_files:
-                return pdf_files[0], product_folder.name
-
-    return None, None
+def find_sample_pdf(pdf_dir: Path | None = None) -> Path | None:
+    directory = pdf_dir or resolve_project_path("data/pdfs")
+    if not directory.exists():
+        return None
+    return next(iter(sorted(directory.glob("*.pdf"))), None)
 
 
-def extract_sample_text(pdf_path):
-    """
-    Extract sample text from first few pages
-    """
+def extract_sample_text(pdf_path: Path) -> str:
     try:
-        reader = PdfReader(pdf_path)
+        reader = PdfReader(str(pdf_path))
+    except Exception as exc:
+        print(f"{Fore.RED}Error reading PDF: {exc}{Style.RESET_ALL}")
+        return ""
 
-        for page in reader.pages[:3]:
+    for page in reader.pages[:3]:
+        try:
             text = page.extract_text()
-
-            if text and len(text.strip()) > 100:
-                return text
-
-    except Exception as e:
-        print(f"{Fore.RED}❌ Error reading PDF: {e}{Style.RESET_ALL}")
-
-    return None
+        except Exception:
+            text = ""
+        if text and len(text.strip()) > 100:
+            return text
+    return ""
 
 
-def main():
+def compare_chunking(pdf_path: Path | None = None) -> int:
+    print(f"{Fore.CYAN}{'=' * 60}")
+    print("PLAYSTATION MANUAL CHUNKING COMPARISON")
+    print(f"{'=' * 60}{Style.RESET_ALL}\n")
 
-    print(f"{Fore.CYAN}{'='*60}")
-    print(f"📱 SAMSUNG MANUAL CHUNKING COMPARISON")
-    print(f"{'='*60}{Style.RESET_ALL}\n")
+    sample_pdf = pdf_path or find_sample_pdf()
+    if sample_pdf is None:
+        print(f"{Fore.RED}No manuals found in data/pdfs/{Style.RESET_ALL}")
+        return 1
 
-    pdf_path, product_name = find_sample_pdf()
-
-    if not pdf_path:
-        print(f"{Fore.RED}❌ No manuals found in data/pdfs/{Style.RESET_ALL}")
-        print(f"{Fore.YELLOW}💡 Run ingestion first by asking a query{Style.RESET_ALL}")
-        return
-
-    print(f"{Fore.YELLOW}📄 Product: {product_name}{Style.RESET_ALL}")
-    print(f"{Fore.YELLOW}📄 File: {pdf_path.name}{Style.RESET_ALL}\n")
-
-    sample_text = extract_sample_text(pdf_path)
-
+    sample_text = extract_sample_text(sample_pdf)
     if not sample_text:
-        print(f"{Fore.RED}❌ No extractable text found{Style.RESET_ALL}")
-        return
+        print(f"{Fore.RED}No extractable text found in {sample_pdf.name}{Style.RESET_ALL}")
+        return 1
 
-    # ----------------------------------------
-    # TEXT STATS
-    # ----------------------------------------
-    print(f"{Fore.CYAN}📊 Original Text Stats:{Style.RESET_ALL}")
-    print(f"   • Characters: {len(sample_text)}")
-    print(f"   • Words: {len(sample_text.split())}")
-    print(f"   • Lines: {len(sample_text.splitlines())}\n")
+    print(f"{Fore.YELLOW}File: {sample_pdf.name}{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}Characters: {len(sample_text)}{Style.RESET_ALL}")
+    print(f"{Fore.YELLOW}Words: {len(sample_text.split())}{Style.RESET_ALL}\n")
 
-    # ----------------------------------------
-    # RUN COMPARISON
-    # ----------------------------------------
     results = compare_all_strategies(sample_text)
 
-    print(f"{Fore.CYAN}{'='*60}")
-    print(f"📊 CHUNKING RESULTS")
-    print(f"{'='*60}{Style.RESET_ALL}\n")
-
     for name, stats in results.items():
-        print(f"{Fore.YELLOW}{name}:{Style.RESET_ALL}")
-        print(f"   • Chunks: {stats['chunks']}")
-        print(f"   • Avg size: {stats['avg_size']}")
+        print(f"{Fore.CYAN}{name}{Style.RESET_ALL}")
+        print(f"  Chunks: {stats['chunks']}")
+        print(f"  Avg size: {stats['avg_size']}")
+        preview = stats.get("first_chunk", "")
+        if preview:
+            print(f"  Preview: {preview[:160]}...")
+        print()
 
-        if stats["first_chunk"]:
-            print(f"   • Preview: {stats['first_chunk'][:150]}...\n")
-        else:
-            print()
+    print(f"{Fore.GREEN}Recommended default: manual chunking for product manuals.{Style.RESET_ALL}")
+    return 0
 
-    # ----------------------------------------
-    # MANUAL-SPECIFIC RECOMMENDATION
-    # ----------------------------------------
-    print(f"{Fore.CYAN}{'='*60}")
-    print(f"💡 RECOMMENDATION FOR SAMSUNG MANUALS")
-    print(f"{'='*60}{Style.RESET_ALL}\n")
 
-    print(f"{Fore.GREEN}✅ BEST: manual_chunking{Style.RESET_ALL}")
-    print(f"   • Preserves steps (VERY important)")
-    print(f"   • Keeps troubleshooting intact")
-    print(f"   • Avoids breaking instructions\n")
-
-    print(f"{Fore.YELLOW}⚠️ Use semantic only if:{Style.RESET_ALL}")
-    print(f"   • Content is simple text")
-    print(f"   • Not instruction-heavy\n")
-
-    print(f"{Fore.RED}❌ Avoid token-based for manuals:{Style.RESET_ALL}")
-    print(f"   • Breaks steps randomly")
-    print(f"   • Hurts retrieval quality\n")
+def main() -> int:
+    return compare_chunking()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
+
